@@ -1,5 +1,5 @@
 import React, { FC, useRef, useState } from 'react'
-import { SlidersHorizontal, PanelLeftClose, PanelLeftOpen, History as HistoryIcon } from 'lucide-react'
+import { SlidersHorizontal, PanelLeftClose, PanelLeftOpen, History as HistoryIcon, Layers } from 'lucide-react'
 import {
   Tooltip,
   TooltipContent,
@@ -49,6 +49,21 @@ const HomeLayout: FC<IProps> = ({ NoteForm, Preview, History }) => {
                 <div className="text-2xl font-bold text-gray-800">BiliNote</div>
               </div>
               <div className="flex items-center gap-1">
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Link
+                        to={'/batch'}
+                        className="text-muted-foreground hover:text-primary cursor-pointer rounded p-1 hover:bg-neutral-100"
+                      >
+                        <Layers className="h-5 w-5" />
+                      </Link>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <span>批量笔记</span>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>

@@ -52,7 +52,8 @@ class BilibiliDownloader(Downloader, ABC):
         video_url: str,
         output_dir: Union[str, None] = None,
         quality: DownloadQuality = "fast",
-        need_video:Optional[bool]=False
+        need_video:Optional[bool]=False,
+        skip_download: bool = False,
     ) -> AudioDownloadResult:
         if output_dir is None:
             output_dir = get_data_dir()
@@ -77,11 +78,15 @@ class BilibiliDownloader(Downloader, ABC):
             'noplaylist': True,
             'quiet': False,
         }
+        if skip_download:
+            ydl_opts['skip_download'] = True
+            # 只取元信息时没有媒体文件，跳过 ffmpeg 提取音频的后处理
+            ydl_opts.pop('postprocessors', None)
         if self._cookiefile:
             ydl_opts['cookiefile'] = self._cookiefile
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(video_url, download=True)
+            info = ydl.extract_info(video_url, download=not skip_download)
             video_id = info.get("id")
             title = info.get("title")
             duration = info.get("duration", 0)

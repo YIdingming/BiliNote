@@ -42,6 +42,7 @@ pyinstaller ^
   --hidden-import fastapi ^
   --hidden-import starlette ^
   --add-data "app\db\builtin_providers.json;." ^
+  --add-data "gpu_patch\torch_stub\__init__.py;torch" ^
   --add-data ".env;." ^
   backend\main.py
 

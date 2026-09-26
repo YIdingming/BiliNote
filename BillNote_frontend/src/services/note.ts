@@ -41,6 +41,22 @@ export const generateNote = async (data: {
   }
 }
 
+export const generateNotesBatch = async (data: {
+  items: Array<{ video_url: string; platform: string }>
+  quality: string
+  model_name: string
+  provider_id: string
+  format: Array<string>
+  style: string
+  extras?: string
+  screenshot?: boolean
+  link?: boolean
+}) => {
+  const response = await request.post('/generate_notes_batch', data)
+  // 每条形如 { video_url, platform, task_id, error }，无效链接 task_id 为 null
+  return response as Array<{ video_url: string; platform: string; task_id: string | null; error: string | null }>
+}
+
 export const delete_task = async ({ video_id, platform }) => {
   try {
     const data = {

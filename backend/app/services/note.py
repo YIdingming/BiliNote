@@ -595,7 +595,7 @@ class NoteGenerator:
         :param extras: GPT 额外参数
         :return: 生成的 Markdown 字符串
         """
-        task_id = markdown_cache_file.stem
+        task_id = markdown_cache_file.stem.split("_")[0]
         self._update_status(task_id, TaskStatus.SUMMARIZING)
 
         source = GPTSource(

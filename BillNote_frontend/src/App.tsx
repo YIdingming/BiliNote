@@ -29,6 +29,7 @@ const Monitor = lazy(() => import('@/pages/SettingPage/Monitor.tsx'))
 const Downloader = lazy(() => import('@/pages/SettingPage/Downloader.tsx'))
 const DownloaderForm = lazy(() => import('@/components/Form/DownloaderForm/Form.tsx'))
 const TranscriberPage = lazy(() => import('@/pages/SettingPage/transcriber.tsx'))
+const BatchPage = lazy(() => import('@/pages/BatchPage'))
 const NotFoundPage = lazy(() => import('@/pages/NotFoundPage'))
 
 function App() {
@@ -72,6 +73,7 @@ function App() {
             <Route path="/onboarding" element={<Onboarding />} />
             <Route path="/" element={<OnboardingGuard><Index /></OnboardingGuard>}>
               <Route index element={<HomePage />} />
+              <Route path="batch" element={<BatchPage />} />
               <Route path="settings" element={<SettingPage />}>
                 <Route index element={<Navigate to="model" replace />} />
                 <Route path="model" element={<Model />}>

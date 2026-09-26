@@ -42,6 +42,14 @@ BiliNote 是一个开源的 AI 视频笔记助手，支持通过哔哩哔哩、Y
 
 > 💡 **想直接用、不想本地部署？** —— [BiliNote Pro 在线版 www.bilinote.app](https://www.bilinote.app/) 已上线，云端托管、开箱即用，省去依赖安装 / 代理配置 / 模型下载的全部麻烦。
 
+## 🔱 关于本 Fork
+
+本仓库是 [JefferyHcool/BiliNote](https://github.com/JefferyHcool/BiliNote)（MIT License）的 fork，在上游 v2.4.5 基础上做了以下增强，原项目全部功能保持不变：
+
+1. **批量笔记页**：首页左上角「批量笔记」入口 —— 粘贴视频链接清单（每行一条），自动识别平台、无效链接自动剔除，批量提交后逐条显示进度，完成后一键打包下载全部 Markdown（.zip）。
+2. **GPU 可选增强（Windows / NVIDIA）**：安装包内置 GPU 自适应探测（torch 桩），默认 CPU 运行；只要本机具备 CUDA 运行环境即自动启用 GPU 转写，无需改动任何文件。启用方法见下文「启用 GPU 加速」。
+3. **修复上游下载链路缺陷**：修复 B 站 / 抖音 / 快手在「已有字幕」时误触完整视频下载的问题（上游 `skip_download` 参数未生效），并修复转写/总结阶段进度状态不更新（长时间卡在「下载中」）的问题。
+
 ## 🌐 在线使用（推荐）
 
 直接访问 **[www.bilinote.app](https://www.bilinote.app/)** 即可使用 BiliNote Pro 在线版，无需本地部署。
@@ -56,6 +64,19 @@ BiliNote 是一个开源的 AI 视频笔记助手，支持通过哔哩哔哩、Y
 本项目提供了 Windows 和 macOS 桌面客户端，可在 [Releases](https://github.com/JefferyHcool/BiliNote/releases) 页面下载最新版本。
 
 > Windows 用户请注意：一定要在没有中文路径的环境下运行。
+
+### ⚡ 启用 GPU 加速（可选，Windows / NVIDIA 显卡）
+
+安装包默认以 CPU 转写（内置 GPU 自适应探测，无 CUDA 环境时零影响）。有 NVIDIA 显卡并希望转写提速数倍时，补齐 CUDA 运行时即可自动启用，无需改动任何文件：
+
+1. 确认显卡驱动正常（`nvidia-smi` 可用）；
+2. 提供以下 DLL（CUDA 12.x + cuDNN 9）：
+   - `cublas64_12.dll`、`cublasLt64_12.dll`（来自 CUDA Toolkit 12）
+   - `cudnn64_9.dll` 及 cudnn9 全套子库（来自 cuDNN 9）
+3. 将它们放进安装目录的 `_internal\ctranslate2\` 内（或加入系统 PATH）；
+4. 重启 BiliNote，首次生成笔记时探测通过即自动走 GPU（可查看 `_internal\torch\_probe.log` 确认）。
+
+> 💡 简便做法：`pip install torch --index-url https://download.pytorch.org/whl/cu124` 装一份 PyTorch CUDA 版，然后把它 `site-packages\torch\lib\` 下的上述 DLL 拷进 `_internal\ctranslate2\` 即可。显存占用约 2.3GB（medium 模型）。
 
 ## 💎 BiliNote AI笔记系统一对一搭建服务
 

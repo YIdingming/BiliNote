@@ -3,7 +3,7 @@ import json
 import os
 import uuid
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks, UploadFile, File
@@ -75,6 +75,27 @@ class VideoRequest(BaseModel):
                                 message=NoteErrorEnum.PLATFORM_NOT_SUPPORTED.message)
 
         return v
+
+
+class BatchVideoItem(BaseModel):
+    video_url: str
+    platform: str
+
+
+class BatchVideoRequest(BaseModel):
+    # 平台由前端按 URL 推断后逐条传入；每条一个 task_id，串行队列逐条执行
+    items: List[BatchVideoItem]
+    quality: DownloadQuality
+    model_name: str
+    provider_id: str
+    screenshot: Optional[bool] = False
+    link: Optional[bool] = False
+    format: Optional[list] = []
+    style: Optional[str] = None
+    extras: Optional[str] = None
+    video_understanding: Optional[bool] = False
+    video_interval: Optional[int] = 0
+    grid_size: Optional[list] = []
 
 
 NOTE_OUTPUT_DIR = os.getenv("NOTE_OUTPUT_DIR", "note_results")
@@ -239,6 +260,60 @@ def generate_note(data: VideoRequest, background_tasks: BackgroundTasks):
                                   data.screenshot, data.model_name, data.provider_id, data.format, data.style,
                                   data.extras, data.video_understanding, data.video_interval, data.grid_size)
         return R.success({"task_id": task_id})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/generate_notes_batch")
+def generate_notes_batch(data: BatchVideoRequest, background_tasks: BackgroundTasks):
+    """批量生成笔记：复用单条的 run_note_task + 串行队列，逐条入队。
+
+    单条 URL 无效不阻塞整批，失败原因随该条返回（task_id=None）。
+    """
+    try:
+        # 就绪门禁与单条一致，批量开头检查一次
+        from app.services.transcriber_config_manager import TranscriberConfigManager
+        readiness = TranscriberConfigManager().is_model_ready()
+        if not readiness["ready"]:
+            logger.warning(f"拒绝 generate_notes_batch：{readiness['reason']}")
+            return R.error(
+                msg=readiness["reason"],
+                code=300102,
+                data={
+                    "reason": "transcriber_model_not_ready",
+                    "transcriber_type": readiness["transcriber_type"],
+                    "model_size": readiness["model_size"],
+                    "downloading": readiness["downloading"],
+                },
+            )
+
+        results = []
+        for item in data.items:
+            video_url = item.video_url
+            if item.platform == "bilibili":
+                # 与单条接口一致：稍后再看/收藏夹/带追踪参数的链接先规范化
+                video_url = normalize_video_url(str(video_url))
+            if not is_supported_video_url(video_url):
+                results.append({
+                    "video_url": video_url,
+                    "platform": item.platform,
+                    "task_id": None,
+                    "error": NoteErrorEnum.PLATFORM_NOT_SUPPORTED.message,
+                })
+                continue
+
+            task_id = str(uuid.uuid4())
+            NoteGenerator()._update_status(task_id, TaskStatus.PENDING)
+            background_tasks.add_task(run_note_task, task_id, video_url, item.platform, data.quality, data.link,
+                                      data.screenshot, data.model_name, data.provider_id, data.format, data.style,
+                                      data.extras, data.video_understanding, data.video_interval, data.grid_size)
+            results.append({
+                "video_url": video_url,
+                "platform": item.platform,
+                "task_id": task_id,
+                "error": None,
+            })
+        return R.success(results)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
