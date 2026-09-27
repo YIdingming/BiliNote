@@ -32,20 +32,28 @@ class BilibiliDownloader(Downloader, ABC):
         self._cookiefile = self._write_netscape_cookie_file()
 
     def _write_netscape_cookie_file(self) -> Optional[str]:
-        """将 Cookie 写入 Netscape 格式临时文件，返回文件路径（供 yt-dlp cookiefile 使用）"""
+        """将 Cookie 写入 Netscape 格式文件，返回文件路径（供 yt-dlp cookiefile 使用）。
+
+        用固定的临时路径并覆盖写入：实例化频繁（每次任务/解析），delete=False 的
+        随机路径会在 %TEMP% 累积含登录凭据的明文文件。
+        """
         if not self._cookie:
             logger.warning("B站 Cookie 未配置，下载可能失败")
             return None
+        cookie_path = os.path.join(tempfile.gettempdir(), "bilinote_bilibili_cookies.txt")
         lines = ["# Netscape HTTP Cookie File\n"]
         for pair in self._cookie.split("; "):
             if "=" in pair:
                 key, value = pair.split("=", 1)
                 lines.append(f".bilibili.com\tTRUE\t/\tFALSE\t0\t{key}\t{value}\n")
-        tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8')
-        tmp.writelines(lines)
-        tmp.close()
-        logger.info("已生成 B站 Netscape Cookie 文件: %s (条目: %d)", tmp.name, len(lines) - 1)
-        return tmp.name
+        try:
+            with open(cookie_path, "w", encoding="utf-8") as f:
+                f.writelines(lines)
+        except OSError as e:
+            logger.warning("写入 B站 Cookie 文件失败: %s", e)
+            return None
+        logger.info("已写入 B站 Netscape Cookie 文件: %s", cookie_path)
+        return cookie_path
 
     def download(
         self,

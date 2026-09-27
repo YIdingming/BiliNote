@@ -47,6 +47,7 @@ export const HomePage: FC = () => {
       Preview={
         activeBatchId ? (
           <BatchDetail
+            key={activeBatchId}
             batchId={activeBatchId}
             onClose={() => setActiveBatchId(null)}
             onPreviewTask={taskId => {
@@ -58,7 +59,16 @@ export const HomePage: FC = () => {
           <MarkdownViewer status={status} />
         )
       }
-      History={<History onSelectBatch={setActiveBatchId} />}
+      History={
+        <History
+          onSelectBatch={setActiveBatchId}
+          onSelect={taskId => {
+            // 点普通笔记卡片时退出批次详情，否则右侧停在批次视图看起来"没反应"
+            setActiveBatchId(null)
+            setCurrentTask(taskId)
+          }}
+        />
+      }
     />
   )
 }

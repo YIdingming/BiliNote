@@ -162,18 +162,27 @@ export async function exportBatchZip(
   options: BatchExportOptions,
   batchName: string
 ): Promise<Blob> {
+  // xmind 转换是 CPU 密集，先并行生成再统一入 zip，避免大批次串行等待
+  const xmindBlobs = options.xmind
+    ? await Promise.all(
+        items.map(item =>
+          item.markdown ? markdownToXMindBlob(item.markdown, item.title) : Promise.resolve(null)
+        )
+      )
+    : []
+
   const zip = new JSZip()
-  for (const item of items) {
+  items.forEach((item, i) => {
     const base = `${String(item.index).padStart(2, '0')}_${safeFileName(item.title)}`
     if (options.markdown && item.markdown) zip.file(`${base}.md`, item.markdown)
     if (options.transcript) {
       const text = buildTranscriptText(item.transcript, options.withTimestamp)
       if (text) zip.file(`${base}.txt`, text)
     }
-    if (options.xmind && item.markdown) {
-      zip.file(`${base}.xmind`, await markdownToXMindBlob(item.markdown, item.title))
+    if (options.xmind && item.markdown && xmindBlobs[i]) {
+      zip.file(`${base}.xmind`, xmindBlobs[i]!)
     }
-  }
+  })
   if (options.merged && items.length > 0) {
     zip.file('合集.md', buildMergedMarkdown(items, batchName))
   }

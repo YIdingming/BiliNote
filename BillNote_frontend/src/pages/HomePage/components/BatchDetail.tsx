@@ -76,22 +76,29 @@ export const BatchDetail: FC<BatchDetailProps> = ({ batchId, onClose, onPreviewT
 
   const handleExport = async () => {
     if (!batch) return
-    const items = groupTasks
+    const selected = groupTasks
       .map((task, i) => ({ task, order: i + 1 }))
       .filter(({ task }) => checkedIds.has(task.id))
-      .map(({ task, order }) => ({
-        index: order,
-        taskId: task.id,
-        title: task.audioMeta?.title || `视频 ${order}`,
-        markdown: latestMarkdownOf(task.markdown),
-        transcript: task.transcript,
-      }))
-    if (!items.length) return
+    if (!selected.length) return
+    // 仅已完成笔记有可导出内容；进行中/失败的条目跳过并告知
+    const exportable = selected.filter(({ task }) => isDone(task.status) && task.status === 'SUCCESS')
+    const skipped = selected.length - exportable.length
+    if (!exportable.length) {
+      toast.error('选中的条目都没有可导出的内容（仅已完成笔记可导出）')
+      return
+    }
+    const items = exportable.map(({ task, order }) => ({
+      index: order,
+      taskId: task.id,
+      title: task.audioMeta?.title || `视频 ${order}`,
+      markdown: latestMarkdownOf(task.markdown),
+      transcript: task.transcript,
+    }))
     setExporting(true)
     try {
       const blob = await exportBatchZip(items, options, batch.name)
       downloadBlob(blob, `${batch.name}.zip`)
-      toast.success('导出完成')
+      toast.success(`导出完成${skipped ? `（已跳过 ${skipped} 条未完成）` : ''}`)
     } catch (e) {
       console.error('批次导出失败:', e)
       toast.error('导出失败，请查看控制台')
@@ -102,6 +109,11 @@ export const BatchDetail: FC<BatchDetailProps> = ({ batchId, onClose, onPreviewT
 
   const handleRemoveTask = (taskId: string) => {
     removeTask(taskId)
+    // 删掉批次内最后一条时同步清理批次对象并退出详情，避免 0/0 空详情
+    if (groupTasks.length <= 1) {
+      useBatchStore.getState().removeBatch(batchId)
+      onClose()
+    }
   }
 
   const handleRetryAllFailed = () => {

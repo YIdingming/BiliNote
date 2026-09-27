@@ -150,7 +150,12 @@ const BatchPage = () => {
         grid_size: videoUnderstanding ? [gridCols, gridRows] : [],
       })
       const ok = results.filter(r => r.task_id)
+      if (!ok.length) {
+        toast.error('没有可提交的有效链接')
+        return
+      }
       const batchId = addBatch(batchName, ok.map(r => r.task_id))
+      // formData 存完整生成配置：批次内失败重试（retryTask 用 formData 重跑）才不会丢配置
       ok.forEach(r => {
         addPendingTask(
           r.task_id,
@@ -161,8 +166,14 @@ const BatchPage = () => {
             quality: 'medium',
             model_name: modelName,
             provider_id: provider.provider_id,
-            link: false,
+            format: formats,
+            style,
+            extras: '',
             screenshot: false,
+            link: false,
+            video_understanding: videoUnderstanding,
+            video_interval: videoUnderstanding ? videoInterval : 0,
+            grid_size: videoUnderstanding ? [gridCols, gridRows] : [],
           },
           batchId,
         )
@@ -171,8 +182,11 @@ const BatchPage = () => {
       toast.success(
         `批次已提交：${ok.length} 条任务${failed ? `，${failed} 条链接无效被跳过` : ''}，进度见主页生成历史`,
       )
-      setRawInput('')
-      setBatchName('')
+      // 全部成功才清空清单；有跳过/失败时保留，方便用户修正后重提
+      if (ok.length === results.length && invalidCount === 0) {
+        setRawInput('')
+        setBatchName('')
+      }
     } catch (e) {
       // request 拦截器已弹过错误 toast（含转写模型未就绪提示）
       console.error('批量提交失败：', e)

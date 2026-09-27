@@ -1,7 +1,7 @@
 import { useTaskStore, type Task } from '@/store/taskStore'
 import { useBatchStore, type Batch } from '@/store/batchStore'
 import { cn } from '@/lib/utils.ts'
-import { Trash, ChevronRight, ChevronDown, Loader2 } from 'lucide-react'
+import { Trash, ChevronRight, ChevronDown, Loader2, RotateCcw } from 'lucide-react'
 import { Button } from '@/components/ui/button.tsx'
 import Fuse from 'fuse.js'
 
@@ -31,9 +31,10 @@ interface NoteCardProps {
   baseURL: string
   onSelect: (taskId: string) => void
   onRemove: (taskId: string) => void
+  onRetry?: (taskId: string) => void
 }
 
-const NoteCard: FC<NoteCardProps> = ({ task, selected, baseURL, onSelect, onRemove }) => {
+const NoteCard: FC<NoteCardProps> = ({ task, selected, baseURL, onSelect, onRemove, onRetry }) => {
   return (
     <div
       onClick={() => onSelect(task.id)}
@@ -99,7 +100,30 @@ const NoteCard: FC<NoteCardProps> = ({ task, selected, baseURL, onSelect, onRemo
           )}
         </div>
 
-        <div>
+        <div className="flex items-center gap-0.5">
+          {task.status === 'FAILED' && onRetry && (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    size="small"
+                    variant="ghost"
+                    onClick={e => {
+                      e.stopPropagation()
+                      onRetry(task.id)
+                    }}
+                    className="shrink-0"
+                  >
+                    <RotateCcw className="h-4 w-4 text-blue-500" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>重试</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -244,6 +268,7 @@ const BatchCard: FC<BatchCardProps> = ({
 const NoteHistory: FC<NoteHistoryProps> = ({ onSelect, onSelectBatch, selectedId }) => {
   const tasks = useTaskStore(state => state.tasks)
   const removeTask = useTaskStore(state => state.removeTask)
+  const retryTask = useTaskStore(state => state.retryTask)
   const batches = useBatchStore(state => state.batches)
   const removeBatch = useBatchStore(state => state.removeBatch)
   // 确保baseURL没有尾部斜杠
@@ -255,10 +280,7 @@ const NoteHistory: FC<NoteHistoryProps> = ({ onSelect, onSelectBatch, selectedId
     threshold: 0.4 // 匹配精度（越低越严格）
   }), [tasks])
   useEffect(() => {
-    const timer = setTimeout(() => {
-      if (rawSearch === '') return
-      setSearch(rawSearch)
-    }, 300) // 300ms 防抖
+    const timer = setTimeout(() => setSearch(rawSearch), 300) // 300ms 防抖
 
     return () => clearTimeout(timer)
   }, [rawSearch])
@@ -328,8 +350,8 @@ const NoteHistory: FC<NoteHistoryProps> = ({ onSelect, onSelectBatch, selectedId
             type="text"
             placeholder="搜索笔记标题..."
             className="w-full rounded border border-neutral-300 px-3 py-1 text-sm outline-none focus:border-primary"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
+            value={rawSearch}
+            onChange={e => setRawSearch(e.target.value)}
         />
       </div>
       <div className="flex flex-col gap-2 overflow-hidden">

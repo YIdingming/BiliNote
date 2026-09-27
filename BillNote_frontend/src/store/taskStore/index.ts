@@ -6,7 +6,7 @@ import toast from 'react-hot-toast'
 import { get, set, del } from 'idb-keyval'
 
 
-export type TaskStatus = 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILD'
+export type TaskStatus = 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED'
 
 export interface AudioMeta {
   cover_url: string
@@ -57,6 +57,13 @@ export interface Task {
     quality: string
     model_name: string
     provider_id: string
+    // 批量/重试链路需要的完整生成配置（缺失时重试会退回后端默认值）
+    format?: string[]
+    style?: string
+    extras?: string
+    video_understanding?: boolean
+    video_interval?: number
+    grid_size?: number[]
   }
 }
 
@@ -208,6 +215,7 @@ export const useTaskStore = create<TaskStore>()(
                     ...t,
                     formData: newFormData, // ✅ 显式更新 formData
                     status: 'PENDING',
+                    completedAt: undefined, // 重跑后 ETA 基线重置
                   }
                   : t
           ),

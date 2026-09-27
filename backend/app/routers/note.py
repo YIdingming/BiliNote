@@ -148,8 +148,17 @@ def run_note_task(task_id: str, video_url: str, platform: str, quality: Download
                   video_interval=0, grid_size=[]
                   ):
 
+    def _mark_failed(message: str):
+        # 任务状态文件已由调用方写成 PENDING：任何入口异常都必须落到 FAILED，
+        # 否则前端会无限轮询一个永远不会执行的"排队中"任务
+        try:
+            NoteGenerator()._update_status(task_id, TaskStatus.FAILED, message)
+        except Exception:
+            logger.error(f"写 FAILED 状态失败 (task_id={task_id})")
+
     if not model_name or not provider_id:
-        raise HTTPException(status_code=400, detail="请选择模型和提供者")
+        _mark_failed("请选择模型和提供者")
+        return
 
     def _execute_note_task():
         return NoteGenerator().generate(
@@ -170,7 +179,12 @@ def run_note_task(task_id: str, video_url: str, platform: str, quality: Download
         )
 
     logger.info(f"任务进入执行队列 (task_id={task_id})")
-    note = task_serial_executor.run(_execute_note_task)
+    try:
+        note = task_serial_executor.run(_execute_note_task)
+    except Exception as e:
+        logger.error(f"任务执行异常 (task_id={task_id})：{e}", exc_info=True)
+        _mark_failed(str(e))
+        return
     logger.info(f"Note generated: {task_id}")
     if not note or not note.markdown:
         logger.warning(f"任务 {task_id} 执行失败，跳过保存")
@@ -264,12 +278,18 @@ def generate_note(data: VideoRequest, background_tasks: BackgroundTasks):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# 单批任务数上限：防止一次请求入队数千任务占满执行队列（自我 DoS）
+MAX_BATCH_ITEMS = 100
+
+
 @router.post("/generate_notes_batch")
 def generate_notes_batch(data: BatchVideoRequest, background_tasks: BackgroundTasks):
-    """批量生成笔记：复用单条的 run_note_task + 串行队列，逐条入队。
+    """批量生成笔记：复用单条的 run_note_task + 执行队列，逐条入队。
 
     单条 URL 无效不阻塞整批，失败原因随该条返回（task_id=None）。
     """
+    if len(data.items) > MAX_BATCH_ITEMS:
+        return R.error(msg=f"单批最多 {MAX_BATCH_ITEMS} 条任务，请分批提交", code=400)
     try:
         # 就绪门禁与单条一致，批量开头检查一次
         from app.services.transcriber_config_manager import TranscriberConfigManager
@@ -287,32 +307,45 @@ def generate_notes_batch(data: BatchVideoRequest, background_tasks: BackgroundTa
                 },
             )
 
+        # 循环外实例化一次：只为写 PENDING 状态文件，不必每条重建
+        status_writer = NoteGenerator()
+
         results = []
         for item in data.items:
-            video_url = item.video_url
-            if item.platform == "bilibili":
-                # 与单条接口一致：稍后再看/收藏夹/带追踪参数的链接先规范化
-                video_url = normalize_video_url(str(video_url))
-            if not is_supported_video_url(video_url):
+            try:
+                video_url = item.video_url
+                if item.platform == "bilibili":
+                    # 与单条接口一致：稍后再看/收藏夹/带追踪参数的链接先规范化
+                    video_url = normalize_video_url(str(video_url))
+                if not is_supported_video_url(video_url):
+                    results.append({
+                        "video_url": video_url,
+                        "platform": item.platform,
+                        "task_id": None,
+                        "error": NoteErrorEnum.PLATFORM_NOT_SUPPORTED.message,
+                    })
+                    continue
+
+                task_id = str(uuid.uuid4())
+                status_writer._update_status(task_id, TaskStatus.PENDING)
+                background_tasks.add_task(run_note_task, task_id, video_url, item.platform, data.quality, data.link,
+                                          data.screenshot, data.model_name, data.provider_id, data.format, data.style,
+                                          data.extras, data.video_understanding, data.video_interval, data.grid_size)
                 results.append({
                     "video_url": video_url,
                     "platform": item.platform,
-                    "task_id": None,
-                    "error": NoteErrorEnum.PLATFORM_NOT_SUPPORTED.message,
+                    "task_id": task_id,
+                    "error": None,
                 })
-                continue
-
-            task_id = str(uuid.uuid4())
-            NoteGenerator()._update_status(task_id, TaskStatus.PENDING)
-            background_tasks.add_task(run_note_task, task_id, video_url, item.platform, data.quality, data.link,
-                                      data.screenshot, data.model_name, data.provider_id, data.format, data.style,
-                                      data.extras, data.video_understanding, data.video_interval, data.grid_size)
-            results.append({
-                "video_url": video_url,
-                "platform": item.platform,
-                "task_id": task_id,
-                "error": None,
-            })
+            except Exception as item_err:
+                # 单条入队失败不中断整批，也不留下无主的 PENDING
+                logger.error(f"批量入队单条失败: {item_err}", exc_info=True)
+                results.append({
+                    "video_url": item.video_url,
+                    "platform": item.platform,
+                    "task_id": None,
+                    "error": str(item_err),
+                })
         return R.success(results)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -323,13 +356,32 @@ class ParseCollectionRequest(BaseModel):
     platform: str = "bilibili"
 
 
+# 解析接口允许的域名白名单：B 站系（含合集/收藏夹主页）+ YouTube
+_PARSABLE_HOSTS = {
+    "www.bilibili.com", "bilibili.com", "m.bilibili.com",
+    "space.bilibili.com", "b23.tv",
+    "www.youtube.com", "youtube.com", "youtu.be", "m.youtube.com",
+}
+# 单次解析的条数上限，防止超大合集长时间占用 worker
+MAX_COLLECTION_ITEMS = 200
+
+
+def _is_parsable_url(url: str) -> bool:
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        return False
+    return (parsed.netloc or "").lower() in _PARSABLE_HOSTS
+
+
 @router.post("/parse_collection")
 def parse_collection(data: ParseCollectionRequest):
     """把合集/收藏夹/分 P 链接展开为有序视频清单（顺序即合集顺序）。
 
     用 yt-dlp extract_flat 只取元信息不下载；bilibili 为主（合集/收藏夹/分 P），
-    youtube playlist 顺带覆盖。
+    youtube playlist 顺带覆盖。只接受白名单域名的 http(s) 链接。
     """
+    if not _is_parsable_url(data.url):
+        return R.error(msg="仅支持 B 站（含合集/收藏夹/分 P）与 YouTube 链接的解析", code=400)
     try:
         import yt_dlp
         from app.downloaders.base import YDL_RETRY_OPTS
@@ -339,6 +391,8 @@ def parse_collection(data: ParseCollectionRequest):
             'extract_flat': 'in_playlist',
             'quiet': True,
             'skip_download': True,
+            'playlistend': MAX_COLLECTION_ITEMS,
+            'socket_timeout': 30,
         }
         # B 站合集/收藏夹可能需要登录态，带上既有 cookie 配置（未配置则跳过）
         try:
@@ -362,7 +416,10 @@ def parse_collection(data: ParseCollectionRequest):
                 url = entry.get('url') or entry.get('webpage_url') or ''
                 if url and not url.startswith('http'):
                     # flat entry 只有 id 时按平台拼标准播放页
-                    url = f"https://www.bilibili.com/video/{entry.get('id') or url}"
+                    if data.platform == 'youtube':
+                        url = f"https://www.youtube.com/watch?v={entry.get('id') or url}"
+                    else:
+                        url = f"https://www.bilibili.com/video/{entry.get('id') or url}"
                 # flat 模式下分 P 常缺独立标题，用合集标题 + 序号兜底
                 title = entry.get('title') or (f"{base_title} P{idx}" if base_title else '')
                 if url:

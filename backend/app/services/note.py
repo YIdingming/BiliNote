@@ -401,7 +401,12 @@ class NoteGenerator:
             logger.info(f"检测到音频缓存 ({audio_cache_file})，直接读取")
             try:
                 data = json.loads(audio_cache_file.read_text(encoding="utf-8"))
-                return AudioDownloadResult(**data)
+                audio = AudioDownloadResult(**data)
+                # skip_download 分支的缓存里 file_path 是占位路径；文件已被清理/损坏时视为缓存失效
+                if audio.file_path and not os.path.exists(audio.file_path):
+                    logger.warning(f"音频缓存指向的文件不存在 ({audio.file_path})，视为缓存失效")
+                else:
+                    return audio
             except Exception as e:
                 logger.warning(f"读取音频缓存失败，将重新下载：{e}")
 

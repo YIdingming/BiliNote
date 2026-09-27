@@ -311,6 +311,9 @@ fn spawn_backend_sidecar(
         "BILLINOTE_SIDECAR_TOKEN".to_string(),
         sidecar_token.to_string(),
     );
+    // 桌面端 sidecar 只服务本机 webview：绑回环地址，避免无鉴权 API 暴露到局域网
+    // （docker/服务器部署仍可通过 BACKEND_HOST 覆盖）
+    all_env_vars.insert("BACKEND_HOST".to_string(), "127.0.0.1".to_string());
 
     let mut sidecar_command = app_handle
         .shell()
