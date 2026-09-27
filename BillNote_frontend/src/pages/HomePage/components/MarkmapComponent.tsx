@@ -3,7 +3,7 @@ import { Markmap } from 'markmap-view'
 import { transformer } from '@/lib/markmap.ts'
 import { Toolbar } from 'markmap-toolbar'
 import 'markmap-toolbar/dist/style.css'
-import JSZip from 'jszip'
+import { markdownToXMindBlob, downloadBlob } from '@/utils/export'
 
 const MIN_EXPORT_FONT_PX = 256
 const MIN_EXPORT_WIDTH = 12800
@@ -374,105 +374,8 @@ export default function MarkmapEditor({
   // 导出XMind格式思维导图
   const exportXMind = async () => {
     try {
-      const { root } = transformMindmap(value);
-
-      // 生成唯一ID
-      const generateId = () => Math.random().toString(36).substring(2, 15);
-
-      // 解码HTML实体（如 &#x5b9e; -> 实，&#12345; -> 对应字符）
-      const decodeHtmlEntities = (text: string): string => {
-        if (!text) return text;
-
-        // 首先手动处理十六进制数字实体 &#xHHHH;
-        let decoded = text.replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => {
-          return String.fromCodePoint(parseInt(hex, 16));
-        });
-
-        // 处理十进制数字实体 &#DDDD;
-        decoded = decoded.replace(/&#(\d+);/g, (_, dec) => {
-          return String.fromCodePoint(parseInt(dec, 10));
-        });
-
-        // 使用textarea处理命名实体（如 &amp; &lt; &gt; 等）
-        const textarea = document.createElement('textarea');
-        textarea.innerHTML = decoded;
-        return textarea.value;
-      };
-
-      // 清理HTML标签，只保留纯文本
-      const stripHtml = (html: string): string => {
-        if (!html) return html;
-        // 先解码HTML实体
-        let text = decodeHtmlEntities(html);
-        // 移除HTML标签
-        const div = document.createElement('div');
-        div.innerHTML = text;
-        return div.textContent || div.innerText || text;
-      };
-
-      // 将 markmap 节点转换为 XMind 节点格式
-      const convertToXMindNode = (node: any, isRoot = false): any => {
-        const rawTitle = node.content || node.payload?.content || '未命名';
-        const xmindNode: any = {
-          id: generateId(),
-          class: isRoot ? 'topic' : 'topic',
-          title: stripHtml(rawTitle),
-        };
-
-        if (node.children && node.children.length > 0) {
-          xmindNode.children = {
-            attached: node.children.map((child: any) => convertToXMindNode(child, false))
-          };
-        }
-
-        return xmindNode;
-      };
-
-      const rootTopic = convertToXMindNode(root, true);
-      const sheetId = generateId();
-
-      // XMind content.json 结构
-      const content = [{
-        id: sheetId,
-        class: 'sheet',
-        title: stripHtml(title) || '思维导图',
-        rootTopic: rootTopic,
-        topicPositioning: 'fixed'
-      }];
-
-      // XMind metadata.json
-      const metadata = {
-        creator: {
-          name: 'BiliNote',
-          version: '1.0.0'
-        }
-      };
-
-      // XMind manifest.json
-      const manifest = {
-        'file-entries': {
-          'content.json': {},
-          'metadata.json': {}
-        }
-      };
-
-      // 使用 JSZip 创建 .xmind 文件
-      // 直接传入字符串，JSZip会自动处理UTF-8编码
-      const zip = new JSZip();
-      zip.file('content.json', JSON.stringify(content, null, 2));
-      zip.file('metadata.json', JSON.stringify(metadata, null, 2));
-      zip.file('manifest.json', JSON.stringify(manifest, null, 2));
-
-      // 生成 ZIP 并下载
-      const blob = await zip.generateAsync({ type: 'blob' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${title || 'mindmap'}.xmind`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      const blob = await markdownToXMindBlob(value, title);
+      downloadBlob(blob, `${title || 'mindmap'}.xmind`);
     } catch (error) {
       console.error('导出XMind失败:', error);
     }

@@ -45,6 +45,10 @@ export interface Task {
   status: TaskStatus
   audioMeta: AudioMeta
   createdAt: string
+  // 所属批次 id（批量提交的任务才有；旧数据/单条任务为 undefined）
+  batchId?: string
+  // 任务到达终态（SUCCESS/FAILED）的时间，用于批次剩余时间预估
+  completedAt?: string
   formData: {
     video_url: string
     link: undefined | boolean
@@ -59,7 +63,7 @@ export interface Task {
 interface TaskStore {
   tasks: Task[]
   currentTaskId: string | null
-  addPendingTask: (taskId: string, platform: string) => void
+  addPendingTask: (taskId: string, platform: string, formData?: any, batchId?: string) => void
   updateTaskContent: (id: string, data: Partial<Omit<Task, 'id' | 'createdAt'>>) => void
   removeTask: (id: string) => void
   clearTasks: () => void
@@ -74,7 +78,7 @@ export const useTaskStore = create<TaskStore>()(
       tasks: [],
       currentTaskId: null,
 
-      addPendingTask: (taskId: string, platform: string, formData: any) =>
+      addPendingTask: (taskId: string, platform: string, formData: any, batchId?: string) =>
 
         set(state => ({
           tasks: [
@@ -84,6 +88,7 @@ export const useTaskStore = create<TaskStore>()(
               status: 'PENDING',
               markdown: '',
               platform: platform,
+              batchId: batchId,
               transcript: {
                 full_text: '',
                 language: '',
@@ -112,6 +117,13 @@ export const useTaskStore = create<TaskStore>()(
               if (task.id !== id) return task
 
               if (task.status === 'SUCCESS' && data.status === 'SUCCESS') return task
+
+              // 任务到达终态时打点完成时间（批次剩余时间预估用）
+              const completion =
+                (data.status === 'SUCCESS' || data.status === 'FAILED') && !task.completedAt
+                  ? { completedAt: new Date().toISOString() }
+                  : {}
+              const dataWithCompletion = { ...data, ...completion }
 
               // 如果是 markdown 字符串，封装为版本
               if (typeof data.markdown === 'string') {
@@ -144,12 +156,12 @@ export const useTaskStore = create<TaskStore>()(
 
                 return {
                   ...task,
-                  ...data,
+                  ...dataWithCompletion,
                   markdown: updatedMarkdown,
                 }
               }
 
-              return { ...task, ...data }
+              return { ...task, ...dataWithCompletion }
             }),
           })),
 

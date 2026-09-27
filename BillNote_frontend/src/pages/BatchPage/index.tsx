@@ -1,17 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import toast from 'react-hot-toast'
-import JSZip from 'jszip'
 import {
   ArrowLeft,
-  CheckCircle2,
-  Download,
   FileWarning,
   Loader2,
+  ListOrdered,
   Play,
-  XCircle,
 } from 'lucide-react'
 
+import { Alert, AlertDescription } from '@/components/ui/alert.tsx'
 import { Button } from '@/components/ui/button.tsx'
 import { Checkbox } from '@/components/ui/checkbox.tsx'
 import {
@@ -22,9 +20,11 @@ import {
   SelectValue,
 } from '@/components/ui/select.tsx'
 import { Textarea } from '@/components/ui/textarea.tsx'
-import { generateNotesBatch } from '@/services/note.ts'
+import { Input } from '@/components/ui/input.tsx'
+import { generateNotesBatch, parseCollection } from '@/services/note.ts'
 import { useModelStore } from '@/store/modelStore'
 import { useTaskStore } from '@/store/taskStore'
+import { useBatchStore } from '@/store/batchStore'
 import { noteFormats, noteStyles } from '@/constant/note.ts'
 
 /** 用户粘贴的链接常缺协议头，无 scheme 时自动补 https://（与 NoteForm 同款逻辑） */
@@ -39,6 +39,13 @@ const detectPlatform = (url: string): string | null => {
   return null
 }
 
+/** 可被后端展开为多条的链接：B 站合集/收藏夹主页、带分 P 的视频链接 */
+const isParsableUrl = (url: string): boolean => {
+  const u = url.toLowerCase()
+  if (u.includes('space.bilibili.com')) return true
+  return /bilibili\.com\/video\/[a-z0-9]+.*[?&]p=\d+/i.test(u)
+}
+
 const PLATFORM_LABEL: Record<string, string> = {
   bilibili: '哔哩哔哩',
   youtube: 'YouTube',
@@ -46,47 +53,27 @@ const PLATFORM_LABEL: Record<string, string> = {
   kuaishou: '快手',
 }
 
-const STATUS_META: Record<string, { label: string; className: string }> = {
-  PENDING: { label: '排队中', className: 'text-neutral-500 bg-neutral-100' },
-  PARSING: { label: '解析中', className: 'text-blue-600 bg-blue-50' },
-  DOWNLOADING: { label: '下载中', className: 'text-blue-600 bg-blue-50' },
-  TRANSCRIBING: { label: '转写中', className: 'text-blue-600 bg-blue-50' },
-  SUMMARIZING: { label: '总结中', className: 'text-blue-600 bg-blue-50' },
-  SAVING: { label: '保存中', className: 'text-blue-600 bg-blue-50' },
-  SUCCESS: { label: '完成', className: 'text-green-600 bg-green-50' },
-  FAILED: { label: '失败', className: 'text-red-600 bg-red-50' },
-}
-
 interface ParsedEntry {
   url: string
   platform: string | null
 }
 
-interface BatchEntry {
-  task_id: string
-  video_url: string
-  platform: string
-}
-
-/** 文件名里替换 Windows 非法字符并截断 */
-const safeFileName = (name: string) => name.replace(/[\\/:*?"<>|]/g, '_').slice(0, 80) || 'untitled'
-
-const latestMarkdown = (markdown: unknown): string => {
-  if (Array.isArray(markdown)) return markdown[0]?.content || ''
-  return typeof markdown === 'string' ? markdown : ''
-}
-
 const BatchPage = () => {
   const [rawInput, setRawInput] = useState('')
+  const [batchName, setBatchName] = useState('')
   const [modelName, setModelName] = useState('')
   const [style, setStyle] = useState<string>(noteStyles[0].value)
   const [formats, setFormats] = useState<string[]>([])
+  const [videoUnderstanding, setVideoUnderstanding] = useState(false)
+  const [videoInterval, setVideoInterval] = useState(6)
+  const [gridCols, setGridCols] = useState(2)
+  const [gridRows, setGridRows] = useState(2)
   const [submitting, setSubmitting] = useState(false)
-  const [batch, setBatch] = useState<BatchEntry[]>([])
-  const [zipping, setZipping] = useState(false)
+  const [parsing, setParsing] = useState(false)
 
   const { loadEnabledModels, modelList } = useModelStore()
-  const { addPendingTask, tasks } = useTaskStore()
+  const { addPendingTask } = useTaskStore()
+  const { addBatch } = useBatchStore()
 
   useEffect(() => {
     loadEnabledModels()
@@ -112,72 +99,85 @@ const BatchPage = () => {
   const validEntries = entries.filter(e => e.platform !== null) as Array<{ url: string; platform: string }>
   const invalidCount = entries.length - validEntries.length
 
-  const batchTasks = batch.map(b => ({
-    ...b,
-    task: tasks.find(t => t.id === b.task_id),
-  }))
-  const successCount = batchTasks.filter(x => x.task?.status === 'SUCCESS').length
-  const doneCount = batchTasks.filter(x => ['SUCCESS', 'FAILED'].includes(x.task?.status || '')).length
+  const handleParseCollection = async () => {
+    const targets = validEntries.filter(e => isParsableUrl(e.url))
+    if (!targets.length) {
+      toast.error('清单里没有可解析的合集/收藏夹/分 P 链接')
+      return
+    }
+    setParsing(true)
+    try {
+      const expanded: string[] = []
+      const keep: string[] = []
+      for (const target of targets) {
+        const items = await parseCollection({ url: target.url, platform: target.platform })
+        expanded.push(...items.map(it => it.url))
+      }
+      // 展开结果替换被解析的行，其余行保留；追加到清单末尾
+      const targetSet = new Set(targets.map(t => t.url))
+      for (const line of rawInput.split('\n')) {
+        const trimmed = line.trim()
+        if (trimmed && targetSet.has(withScheme(trimmed))) continue
+        keep.push(line)
+      }
+      const merged = [...keep.filter(l => l.trim()), ...expanded].join('\n')
+      setRawInput(merged)
+      toast.success(`已展开 ${expanded.length} 条链接`)
+    } catch (e) {
+      console.error('解析合集失败：', e)
+    } finally {
+      setParsing(false)
+    }
+  }
 
   const handleGenerate = async () => {
     if (!validEntries.length || !modelName) return
+    const provider = modelList.find(m => m.model_name === modelName)
+    if (!provider) return
     setSubmitting(true)
     try {
       const results = await generateNotesBatch({
         items: validEntries.map(e => ({ video_url: e.url, platform: e.platform })),
         quality: 'medium',
         model_name: modelName,
-        provider_id: modelList.find(m => m.model_name === modelName)!.provider_id,
+        provider_id: provider.provider_id,
         format: formats,
         style,
+        screenshot: false,
+        link: false,
+        video_understanding: videoUnderstanding,
+        video_interval: videoUnderstanding ? videoInterval : 0,
+        grid_size: videoUnderstanding ? [gridCols, gridRows] : [],
       })
       const ok = results.filter(r => r.task_id)
+      const batchId = addBatch(batchName, ok.map(r => r.task_id))
       ok.forEach(r => {
-        addPendingTask(r.task_id, r.platform, {
-          video_url: r.video_url,
-          platform: r.platform,
-          quality: 'medium',
-          model_name: modelName,
-          provider_id: modelList.find(m => m.model_name === modelName)!.provider_id,
-          link: false,
-          screenshot: false,
-        })
+        addPendingTask(
+          r.task_id,
+          r.platform,
+          {
+            video_url: r.video_url,
+            platform: r.platform,
+            quality: 'medium',
+            model_name: modelName,
+            provider_id: provider.provider_id,
+            link: false,
+            screenshot: false,
+          },
+          batchId,
+        )
       })
-      setBatch(prev => [
-        ...prev,
-        ...ok.map(r => ({ task_id: r.task_id, video_url: r.video_url, platform: r.platform })),
-      ])
       const failed = results.length - ok.length
-      toast.success(`已提交 ${ok.length} 条任务${failed ? `，${failed} 条链接无效被跳过` : ''}`)
+      toast.success(
+        `批次已提交：${ok.length} 条任务${failed ? `，${failed} 条链接无效被跳过` : ''}，进度见主页生成历史`,
+      )
+      setRawInput('')
+      setBatchName('')
     } catch (e) {
       // request 拦截器已弹过错误 toast（含转写模型未就绪提示）
       console.error('批量提交失败：', e)
     } finally {
       setSubmitting(false)
-    }
-  }
-
-  const handleDownloadZip = async () => {
-    const done = batchTasks.filter(x => x.task?.status === 'SUCCESS')
-    if (!done.length) return
-    setZipping(true)
-    try {
-      const zip = new JSZip()
-      done.forEach((x, i) => {
-        const title = x.task?.audioMeta?.title || x.video_url
-        zip.file(`${String(i + 1).padStart(2, '0')}_${safeFileName(title)}.md`, latestMarkdown(x.task?.markdown))
-      })
-      const blob = await zip.generateAsync({ type: 'blob' })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `BiliNote_批量笔记_${new Date().toISOString().slice(0, 10)}.zip`
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      URL.revokeObjectURL(url)
-    } finally {
-      setZipping(false)
     }
   }
 
@@ -200,13 +200,25 @@ const BatchPage = () => {
           <section className="rounded-xl border border-neutral-200 bg-white p-4">
             <div className="mb-2 flex items-center justify-between">
               <h2 className="font-medium text-gray-700">视频链接清单</h2>
-              <span className="text-xs text-neutral-400">
-                每行一个链接，自动识别平台（B站 / YouTube / 抖音 / 快手）
-              </span>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-7 px-2 text-xs"
+                onClick={handleParseCollection}
+                disabled={parsing}
+              >
+                {parsing ? (
+                  <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <ListOrdered className="mr-1 h-3.5 w-3.5" />
+                )}
+                解析合集/收藏夹/分P
+              </Button>
             </div>
             <Textarea
               rows={8}
-              placeholder={'https://www.bilibili.com/video/BVxxxx\nhttps://www.bilibili.com/video/BVyyyy'}
+              placeholder={'https://www.bilibili.com/video/BVxxxx\nhttps://space.bilibili.com/xxx/favlist?fid=xxx（可点击上方按钮展开）'}
               value={rawInput}
               onChange={e => setRawInput(e.target.value)}
               className="resize-y font-mono text-sm"
@@ -223,6 +235,14 @@ const BatchPage = () => {
           <section className="rounded-xl border border-neutral-200 bg-white p-4">
             <h2 className="mb-3 font-medium text-gray-700">生成配置</h2>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div>
+                <label className="mb-1.5 block text-sm text-neutral-600">批次名称（可选）</label>
+                <Input
+                  value={batchName}
+                  onChange={e => setBatchName(e.target.value)}
+                  placeholder="如：千星奇域教程（留空自动命名）"
+                />
+              </div>
               <div>
                 <label className="mb-1.5 block text-sm text-neutral-600">生成模型</label>
                 <Select value={modelName} onValueChange={setModelName}>
@@ -261,6 +281,7 @@ const BatchPage = () => {
                   <label key={f.value} className="flex items-center gap-2 text-sm">
                     <Checkbox
                       checked={formats.includes(f.value)}
+                      disabled={f.value === 'screenshot' && !videoUnderstanding}
                       onCheckedChange={checked =>
                         setFormats(
                           checked ? [...formats, f.value] : formats.filter(x => x !== f.value),
@@ -272,6 +293,61 @@ const BatchPage = () => {
                 ))}
               </div>
             </div>
+          </section>
+
+          {/* 视频理解 */}
+          <section className="rounded-xl border border-neutral-200 bg-white p-4">
+            <div className="flex items-center justify-between">
+              <h2 className="font-medium text-gray-700">视频理解</h2>
+              <label className="flex items-center gap-2 text-sm">
+                <Checkbox
+                  checked={videoUnderstanding}
+                  onCheckedChange={checked => setVideoUnderstanding(!!checked)}
+                />
+                启用
+              </label>
+            </div>
+            <div
+              className={`mt-3 grid grid-cols-2 gap-4 transition-opacity ${videoUnderstanding ? '' : 'pointer-events-none opacity-40'}`}
+            >
+              <div>
+                <label className="mb-1.5 block text-sm text-neutral-600">采样间隔（秒）</label>
+                <Input
+                  type="number"
+                  min={1}
+                  max={30}
+                  value={videoInterval}
+                  onChange={e => setVideoInterval(Number(e.target.value) || 6)}
+                />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-sm text-neutral-600">拼图尺寸（列 × 行）</label>
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="number"
+                    min={1}
+                    max={10}
+                    value={gridCols}
+                    onChange={e => setGridCols(Number(e.target.value) || 2)}
+                  />
+                  <span className="text-neutral-400">×</span>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={10}
+                    value={gridRows}
+                    onChange={e => setGridRows(Number(e.target.value) || 2)}
+                  />
+                </div>
+              </div>
+            </div>
+            {videoUnderstanding && (
+              <Alert variant="warning" className="mt-3">
+                <AlertDescription>
+                  提示：视频理解功能必须使用多模态模型，且每条视频会完整下载（批量时明显更慢）。
+                </AlertDescription>
+              </Alert>
+            )}
           </section>
 
           {/* 提交 */}
@@ -287,63 +363,8 @@ const BatchPage = () => {
               )}
               开始生成（{validEntries.length} 条）
             </Button>
-            {batch.length > 0 && (
-              <Button
-                variant="outline"
-                onClick={handleDownloadZip}
-                disabled={zipping || successCount === 0}
-              >
-                {zipping ? (
-                  <Loader2 className="mr-1 h-4 w-4 animate-spin" />
-                ) : (
-                  <Download className="mr-1 h-4 w-4" />
-                )}
-                打包下载 Markdown（{successCount} 条）
-              </Button>
-            )}
+            <span className="text-xs text-neutral-400">进度与导出请到主页「生成历史」的批次卡片</span>
           </div>
-
-          {/* 进度区 */}
-          {batch.length > 0 && (
-            <section className="rounded-xl border border-neutral-200 bg-white p-4">
-              <div className="mb-3 flex items-center justify-between">
-                <h2 className="font-medium text-gray-700">任务进度</h2>
-                <span className="text-xs text-neutral-400">
-                  {doneCount}/{batch.length} 已结束
-                </span>
-              </div>
-              <ul className="space-y-2">
-                {batchTasks.map(x => {
-                  const status = x.task?.status || 'PENDING'
-                  const meta = STATUS_META[status] || STATUS_META.PENDING
-                  const title = x.task?.audioMeta?.title
-                  return (
-                    <li
-                      key={x.task_id}
-                      className="flex items-center gap-3 rounded-lg border border-neutral-100 px-3 py-2 text-sm"
-                    >
-                      {status === 'SUCCESS' ? (
-                        <CheckCircle2 className="h-4 w-4 shrink-0 text-green-500" />
-                      ) : status === 'FAILED' ? (
-                        <XCircle className="h-4 w-4 shrink-0 text-red-500" />
-                      ) : (
-                        <Loader2 className="h-4 w-4 shrink-0 animate-spin text-blue-500" />
-                      )}
-                      <span className="min-w-0 flex-1 truncate" title={x.video_url}>
-                        {title || x.video_url}
-                      </span>
-                      <span className="shrink-0 text-xs text-neutral-400">
-                        {PLATFORM_LABEL[x.platform] || x.platform}
-                      </span>
-                      <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs ${meta.className}`}>
-                        {meta.label}
-                      </span>
-                    </li>
-                  )
-                })}
-              </ul>
-            </section>
-          )}
         </div>
       </main>
     </div>

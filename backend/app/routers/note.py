@@ -318,6 +318,64 @@ def generate_notes_batch(data: BatchVideoRequest, background_tasks: BackgroundTa
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class ParseCollectionRequest(BaseModel):
+    url: str
+    platform: str = "bilibili"
+
+
+@router.post("/parse_collection")
+def parse_collection(data: ParseCollectionRequest):
+    """把合集/收藏夹/分 P 链接展开为有序视频清单（顺序即合集顺序）。
+
+    用 yt-dlp extract_flat 只取元信息不下载；bilibili 为主（合集/收藏夹/分 P），
+    youtube playlist 顺带覆盖。
+    """
+    try:
+        import yt_dlp
+        from app.downloaders.base import YDL_RETRY_OPTS
+
+        ydl_opts = {
+            **YDL_RETRY_OPTS,
+            'extract_flat': 'in_playlist',
+            'quiet': True,
+            'skip_download': True,
+        }
+        # B 站合集/收藏夹可能需要登录态，带上既有 cookie 配置（未配置则跳过）
+        try:
+            from app.downloaders.bilibili_downloader import BilibiliDownloader
+            cookiefile = BilibiliDownloader()._cookiefile
+            if cookiefile:
+                ydl_opts['cookiefile'] = cookiefile
+        except Exception:
+            pass
+
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(data.url, download=False)
+
+        items = []
+        base_title = (info.get('title') or '') if info else ''
+        entries = info.get('entries') if info else None
+        if entries:
+            for idx, entry in enumerate(entries, start=1):
+                if not entry:
+                    continue
+                url = entry.get('url') or entry.get('webpage_url') or ''
+                if url and not url.startswith('http'):
+                    # flat entry 只有 id 时按平台拼标准播放页
+                    url = f"https://www.bilibili.com/video/{entry.get('id') or url}"
+                # flat 模式下分 P 常缺独立标题，用合集标题 + 序号兜底
+                title = entry.get('title') or (f"{base_title} P{idx}" if base_title else '')
+                if url:
+                    items.append({"url": url, "title": title})
+        elif info and info.get('webpage_url'):
+            # 不是 playlist（单视频链接），原样返回一条
+            items.append({"url": info['webpage_url'], "title": info.get('title') or ''})
+        return R.success(items)
+    except Exception as e:
+        logger.error(f"解析合集失败: {e}", exc_info=True)
+        return R.error(msg=f"解析失败: {e}")
+
+
 @router.get("/task_status/{task_id}")
 def get_task_status(task_id: str):
     status_path = os.path.join(NOTE_OUTPUT_DIR, f"{task_id}.status.json")

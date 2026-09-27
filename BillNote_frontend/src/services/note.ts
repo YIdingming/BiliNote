@@ -57,6 +57,12 @@ export const generateNotesBatch = async (data: {
   return response as Array<{ video_url: string; platform: string; task_id: string | null; error: string | null }>
 }
 
+/** 解析合集/收藏夹/分 P 链接 → 有序清单（顺序即合集顺序） */
+export const parseCollection = async (data: { url: string; platform: string }) => {
+  const response = await request.post('/parse_collection', data)
+  return response as Array<{ url: string; title: string }>
+}
+
 export const delete_task = async ({ video_id, platform }) => {
   try {
     const data = {

@@ -1,11 +1,13 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Copy, Download, BrainCircuit, MessageSquare } from 'lucide-react'
+import { Copy, Download, BrainCircuit, MessageSquare, FileText } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { Badge } from '@/components/ui/badge'
+import { useTaskStore } from '@/store/taskStore'
+import { exportTranscriptTxt } from '@/utils/export'
 
 interface VersionNote {
   ver_id: string
@@ -167,6 +169,25 @@ export function MarkdownHeader({
               </Button>
             </TooltipTrigger>
             <TooltipContent>下载为 Markdown 文件</TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                onClick={() => {
+                  const task = useTaskStore.getState().getCurrentTask()
+                  exportTranscriptTxt(task?.transcript, task?.audioMeta?.title || '原文')
+                }}
+                variant="ghost"
+                size="sm"
+                className="h-8 px-2"
+              >
+                <FileText className="mr-1.5 h-4 w-4" />
+                <span className="text-sm">导出原文</span>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>下载转写原文为 TXT 文件</TooltipContent>
           </Tooltip>
         </TooltipProvider>
         <TooltipProvider>

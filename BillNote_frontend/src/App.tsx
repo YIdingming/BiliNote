@@ -2,6 +2,7 @@ import './App.css'
 import { lazy, Suspense, useEffect } from 'react'
 import { BrowserRouter, HashRouter, Navigate, Routes, Route } from 'react-router-dom'
 import { useTaskPolling } from '@/hooks/useTaskPolling.ts'
+import { useBatchNotifications } from '@/hooks/useBatchNotifications.ts'
 import { useCheckBackend } from '@/hooks/useCheckBackend.ts'
 import { systemCheck } from '@/services/system.ts'
 import BackendInitDialog from '@/components/BackendInitDialog'
@@ -34,6 +35,7 @@ const NotFoundPage = lazy(() => import('@/pages/NotFoundPage'))
 
 function App() {
   useTaskPolling(3000) // 每 3 秒轮询一次
+  useBatchNotifications() // 批次全部完成时 toast + 系统通知
   const { loading, initialized, failed, lastError, retry } = useCheckBackend()
 
   // 在后端初始化完成后执行系统检查
