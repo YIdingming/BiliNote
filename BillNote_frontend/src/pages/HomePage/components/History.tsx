@@ -2,7 +2,7 @@ import NoteHistory from '@/pages/HomePage/components/NoteHistory.tsx'
 import { useTaskStore } from '@/store/taskStore'
 import { Info, Clock, Loader2 } from 'lucide-react'
 import { ScrollArea } from '@/components/ui/scroll-area.tsx'
-const History = () => {
+const History = ({ onSelectBatch }: { onSelectBatch?: (batchId: string) => void }) => {
   const currentTaskId = useTaskStore(state => state.currentTaskId)
   const setCurrentTask = useTaskStore(state => state.setCurrentTask)
   return (
@@ -15,7 +15,7 @@ const History = () => {
         </div>
         <ScrollArea className="w-full sm:h-[480px] md:h-[720px] lg:h-[92%]">
           {/*<div className="w-full flex-1 overflow-y-auto">*/}
-          <NoteHistory onSelect={setCurrentTask} selectedId={currentTaskId} />
+          <NoteHistory onSelect={setCurrentTask} onSelectBatch={onSelectBatch} selectedId={currentTaskId} />
           {/*</div>*/}
         </ScrollArea>
       </div>

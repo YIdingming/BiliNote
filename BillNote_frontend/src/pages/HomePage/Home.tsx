@@ -2,14 +2,27 @@ import { FC, useEffect, useState } from 'react'
 import HomeLayout from '@/layouts/HomeLayout.tsx'
 import NoteForm from '@/pages/HomePage/components/NoteForm.tsx'
 import MarkdownViewer from '@/pages/HomePage/components/MarkdownViewer.tsx'
+import { BatchDetail } from '@/pages/HomePage/components/BatchDetail.tsx'
 import { useTaskStore } from '@/store/taskStore'
+import { useBatchStore } from '@/store/batchStore'
 import History from '@/pages/HomePage/components/History.tsx'
 type ViewStatus = 'idle' | 'loading' | 'success' | 'failed'
 export const HomePage: FC = () => {
   const tasks = useTaskStore(state => state.tasks)
   const currentTaskId = useTaskStore(state => state.currentTaskId)
+  const setCurrentTask = useTaskStore(state => state.setCurrentTask)
+  const batches = useBatchStore(state => state.batches)
 
   const currentTask = tasks.find(t => t.id === currentTaskId)
+
+  // 右侧宽栏当前查看的批次（null = 常规笔记预览）
+  const [activeBatchId, setActiveBatchId] = useState<string | null>(null)
+  // 被查看的批次被删除后自动回到笔记预览
+  useEffect(() => {
+    if (activeBatchId && !batches.some(b => b.id === activeBatchId)) {
+      setActiveBatchId(null)
+    }
+  }, [batches, activeBatchId])
 
   const [status, setStatus] = useState<ViewStatus>('idle')
 
@@ -28,17 +41,24 @@ export const HomePage: FC = () => {
     }
   }, [currentTask, currentTask?.status])
 
-  // useEffect( () => {
-  //     get_task_status('d4e87938-c066-48a0-bbd5-9bec40d53354').then(res=>{
-  //         console.log('res1',res)
-  //         setContent(res.data.result.markdown)
-  //     })
-  // }, [tasks]);
   return (
     <HomeLayout
       NoteForm={<NoteForm />}
-      Preview={<MarkdownViewer status={status} />}
-      History={<History />}
+      Preview={
+        activeBatchId ? (
+          <BatchDetail
+            batchId={activeBatchId}
+            onClose={() => setActiveBatchId(null)}
+            onPreviewTask={taskId => {
+              setActiveBatchId(null)
+              setCurrentTask(taskId)
+            }}
+          />
+        ) : (
+          <MarkdownViewer status={status} />
+        )
+      }
+      History={<History onSelectBatch={setActiveBatchId} />}
     />
   )
 }

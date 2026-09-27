@@ -240,7 +240,7 @@ const BatchPage = () => {
                 <Input
                   value={batchName}
                   onChange={e => setBatchName(e.target.value)}
-                  placeholder="如：千星奇域教程（留空自动命名）"
+                  placeholder="输入批次名称，留空自动生成"
                 />
               </div>
               <div>

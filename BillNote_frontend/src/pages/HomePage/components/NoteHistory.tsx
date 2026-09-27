@@ -1,9 +1,8 @@
 import { useTaskStore, type Task } from '@/store/taskStore'
 import { useBatchStore, type Batch } from '@/store/batchStore'
 import { cn } from '@/lib/utils.ts'
-import { Trash, ChevronDown, ChevronRight, RotateCcw, Download, Loader2 } from 'lucide-react'
+import { Trash, ChevronRight, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button.tsx'
-import { Checkbox } from '@/components/ui/checkbox.tsx'
 import Fuse from 'fuse.js'
 
 import {
@@ -14,15 +13,11 @@ import {
 } from '@/components/ui/tooltip.tsx'
 import LazyImage from "@/components/LazyImage.tsx";
 import { FC, useState, useEffect, useMemo } from 'react'
-import {
-  exportBatchZip,
-  downloadBlob,
-  latestMarkdownOf,
-  type BatchExportOptions,
-} from '@/utils/export'
 
 interface NoteHistoryProps {
   onSelect: (taskId: string) => void
+  /** 点击批次行：右侧宽栏切换为批次详情 */
+  onSelectBatch?: (batchId: string) => void
   selectedId: string | null
 }
 
@@ -36,20 +31,9 @@ interface NoteCardProps {
   baseURL: string
   onSelect: (taskId: string) => void
   onRemove: (taskId: string) => void
-  onRetry?: (taskId: string) => void
-  /** 批次内渲染时的勾选框插槽 */
-  leading?: React.ReactNode
 }
 
-const NoteCard: FC<NoteCardProps> = ({
-  task,
-  selected,
-  baseURL,
-  onSelect,
-  onRemove,
-  onRetry,
-  leading,
-}) => {
+const NoteCard: FC<NoteCardProps> = ({ task, selected, baseURL, onSelect, onRemove }) => {
   return (
     <div
       onClick={() => onSelect(task.id)}
@@ -58,8 +42,7 @@ const NoteCard: FC<NoteCardProps> = ({
         selected && 'border-primary bg-primary-light'
       )}
     >
-      <div className={cn('flex items-center gap-2')}>
-        {leading}
+      <div className={cn('flex items-center gap-4')}>
         {/* 封面图 */}
         {task.platform === 'local' ? (
           <img
@@ -67,7 +50,7 @@ const NoteCard: FC<NoteCardProps> = ({
               task.audioMeta.cover_url ? `${task.audioMeta.cover_url}` : '/placeholder.png'
             }
             alt="封面"
-            className="h-10 w-12 shrink-0 rounded-md object-cover"
+            className="h-10 w-12 rounded-md object-cover"
           />
         ) : (
           <LazyImage
@@ -98,7 +81,7 @@ const NoteCard: FC<NoteCardProps> = ({
         </div>
       </div>
       <div className={'mt-2 flex items-center justify-between text-[10px]'}>
-        <div className="flex shrink-0 items-center gap-1">
+        <div className="shrink-0">
           {task.status === 'SUCCESS' && (
             <div className={'bg-primary w-10 rounded p-0.5 text-center text-white'}>
               已完成
@@ -116,30 +99,7 @@ const NoteCard: FC<NoteCardProps> = ({
           )}
         </div>
 
-        <div className="flex items-center gap-0.5">
-          {task.status === 'FAILED' && onRetry && (
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    type="button"
-                    size="small"
-                    variant="ghost"
-                    onClick={e => {
-                      e.stopPropagation()
-                      onRetry(task.id)
-                    }}
-                    className="shrink-0"
-                  >
-                    <RotateCcw className="h-4 w-4 text-blue-500" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>重试</p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          )}
+        <div>
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -167,96 +127,19 @@ const NoteCard: FC<NoteCardProps> = ({
   )
 }
 
-/* -------------------- 批次卡片（可折叠分组） -------------------- */
+/* -------------------- 批次行（点击进入右侧批次详情） -------------------- */
 
-interface BatchCardProps {
+interface BatchRowProps {
   batch: Batch
   tasks: Task[]
-  selectedId: string | null
-  baseURL: string
-  onSelect: (taskId: string) => void
-  onRemoveTask: (taskId: string) => void
-  onRetryTask: (taskId: string) => void
+  onOpen: (batchId: string) => void
   onRemoveBatch: (batchId: string) => void
 }
 
-const BatchCard: FC<BatchCardProps> = ({
-  batch,
-  tasks,
-  selectedId,
-  baseURL,
-  onSelect,
-  onRemoveTask,
-  onRetryTask,
-  onRemoveBatch,
-}) => {
+const BatchRow: FC<BatchRowProps> = ({ batch, tasks, onOpen, onRemoveBatch }) => {
   const allDone = tasks.every(t => isDone(t.status))
-  // 进行中的批次默认展开，全部结束自动折叠
-  const [expanded, setExpanded] = useState(() => !allDone)
-  useEffect(() => {
-    if (allDone) setExpanded(false)
-  }, [allDone])
-
   const doneCount = tasks.filter(t => isDone(t.status)).length
-  const failedTasks = tasks.filter(t => t.status === 'FAILED')
-  const remaining = tasks.length - doneCount
-
-  // 剩余时间预估：已完成条目的平均耗时 × 剩余条数
-  const doneWithTime = tasks.filter(t => t.completedAt)
-  const etaText = useMemo(() => {
-    if (remaining <= 0 || doneWithTime.length === 0) return null
-    const avgMs =
-      doneWithTime.reduce(
-        (sum, t) => sum + (new Date(t.completedAt!).getTime() - new Date(t.createdAt).getTime()),
-        0
-      ) / doneWithTime.length
-    const minutes = Math.ceil((remaining * avgMs) / 60000)
-    return minutes >= 1 ? `约剩 ${minutes} 分钟` : '即将完成'
-  }, [tasks, remaining, doneWithTime.length])
-
-  // 导出：产物类型勾选 + 逐条勾选（默认全选）
-  const [options, setOptions] = useState<BatchExportOptions>({
-    markdown: true,
-    transcript: true,
-    xmind: true,
-    merged: false,
-    withTimestamp: false,
-  })
-  const [checkedIds, setCheckedIds] = useState<Set<string>>(() => new Set(tasks.map(t => t.id)))
-  const [exporting, setExporting] = useState(false)
-
-  const toggleCheck = (taskId: string) => {
-    setCheckedIds(prev => {
-      const next = new Set(prev)
-      if (next.has(taskId)) next.delete(taskId)
-      else next.add(taskId)
-      return next
-    })
-  }
-  const allChecked = checkedIds.size === tasks.length
-
-  const handleExport = async () => {
-    const items = tasks
-      .map((task, i) => ({ task, order: i + 1 }))
-      .filter(({ task }) => checkedIds.has(task.id))
-      .map(({ task, order }) => ({
-        index: order,
-        taskId: task.id,
-        title: task.audioMeta?.title || `视频 ${order}`,
-        markdown: latestMarkdownOf(task.markdown),
-        transcript: task.transcript,
-      }))
-    if (!items.length) return
-    setExporting(true)
-    try {
-      const blob = await exportBatchZip(items, options, batch.name)
-      downloadBlob(blob, `${batch.name}.zip`)
-    } catch (e) {
-      console.error('批次导出失败:', e)
-    } finally {
-      setExporting(false)
-    }
-  }
+  const failedCount = tasks.filter(t => t.status === 'FAILED').length
 
   const handleRemoveBatch = () => {
     if (window.confirm(`删除整个批次「${batch.name}」及其全部 ${tasks.length} 条笔记？`)) {
@@ -265,161 +148,53 @@ const BatchCard: FC<BatchCardProps> = ({
   }
 
   return (
-    <div className="rounded-md border border-neutral-200 bg-neutral-50/60">
-      {/* 折叠行 */}
-      <div
-        className="flex cursor-pointer items-center gap-2 p-2.5"
-        onClick={() => setExpanded(!expanded)}
-      >
-        {expanded ? (
-          <ChevronDown className="h-4 w-4 shrink-0 text-neutral-400" />
-        ) : (
-          <ChevronRight className="h-4 w-4 shrink-0 text-neutral-400" />
-        )}
-        <span className="flex-1 truncate text-sm font-medium text-gray-700" title={batch.name}>
-          {batch.name}
+    <div
+      className="flex cursor-pointer items-center gap-2 rounded-md border border-neutral-200 bg-neutral-50/60 p-2.5 hover:border-neutral-300"
+      onClick={() => onOpen(batch.id)}
+    >
+      <ChevronRight className="h-4 w-4 shrink-0 text-neutral-400" />
+      <span className="min-w-0 flex-1 truncate text-sm font-medium text-gray-700" title={batch.name}>
+        {batch.name}
+      </span>
+      {!allDone && <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-blue-500" />}
+      <span className="shrink-0 text-[10px] text-neutral-500">
+        {doneCount}/{tasks.length} 完成
+      </span>
+      {failedCount > 0 && (
+        <span className="shrink-0 rounded bg-red-500 px-1.5 py-0.5 text-[10px] text-white">
+          失败 {failedCount}
         </span>
-        {!allDone && <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-blue-500" />}
-        <span className="shrink-0 text-[10px] text-neutral-500">
-          {doneCount}/{tasks.length} 完成{etaText ? ` · ${etaText}` : ''}
-        </span>
-        {failedTasks.length > 0 && (
-          <span className="shrink-0 rounded bg-red-500 px-1.5 py-0.5 text-[10px] text-white">
-            失败 {failedTasks.length}
-          </span>
-        )}
-        <TooltipProvider>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                type="button"
-                size="small"
-                variant="ghost"
-                onClick={e => {
-                  e.stopPropagation()
-                  handleRemoveBatch()
-                }}
-                className="shrink-0"
-              >
-                <Trash className="text-muted-foreground h-4 w-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p>删除整个批次</p>
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
-      </div>
-
-      {/* 展开区 */}
-      {expanded && (
-        <div className="border-t border-neutral-100 p-2">
-          {/* 工具行 */}
-          <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded bg-white p-2 text-xs text-neutral-600">
-            <label className="flex items-center gap-1">
-              <Checkbox
-                checked={options.markdown}
-                onCheckedChange={v => setOptions(o => ({ ...o, markdown: !!v }))}
-              />
-              笔记 md
-            </label>
-            <label className="flex items-center gap-1">
-              <Checkbox
-                checked={options.transcript}
-                onCheckedChange={v => setOptions(o => ({ ...o, transcript: !!v }))}
-              />
-              原文 txt
-            </label>
-            <label className="flex items-center gap-1">
-              <Checkbox
-                checked={options.xmind}
-                onCheckedChange={v => setOptions(o => ({ ...o, xmind: !!v }))}
-              />
-              思维导图
-            </label>
-            <label className="flex items-center gap-1">
-              <Checkbox
-                checked={options.merged}
-                onCheckedChange={v => setOptions(o => ({ ...o, merged: !!v }))}
-              />
-              合并合集
-            </label>
-            <label className="flex items-center gap-1">
-              <Checkbox
-                checked={options.withTimestamp}
-                onCheckedChange={v => setOptions(o => ({ ...o, withTimestamp: !!v }))}
-              />
-              原文带时间戳
-            </label>
-            <span className="h-4 w-px bg-neutral-200" />
-            <button
-              className="text-xs text-blue-600 hover:underline"
-              onClick={() =>
-                setCheckedIds(allChecked ? new Set() : new Set(tasks.map(t => t.id)))
-              }
-            >
-              {allChecked ? '取消全选' : '全选'}
-            </button>
+      )}
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
             <Button
               type="button"
-              size="sm"
-              variant="outline"
-              className="h-7 px-2 text-xs"
-              onClick={handleExport}
-              disabled={exporting || checkedIds.size === 0}
+              size="small"
+              variant="ghost"
+              onClick={e => {
+                e.stopPropagation()
+                handleRemoveBatch()
+              }}
+              className="shrink-0"
             >
-              {exporting ? (
-                <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Download className="mr-1 h-3.5 w-3.5" />
-              )}
-              导出选中（{checkedIds.size}）
+              <Trash className="text-muted-foreground h-4 w-4" />
             </Button>
-            {failedTasks.length > 0 && (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="h-7 px-2 text-xs"
-                onClick={() => failedTasks.forEach(t => onRetryTask(t.id))}
-              >
-                <RotateCcw className="mr-1 h-3.5 w-3.5" />
-                重试全部失败
-              </Button>
-            )}
-          </div>
-
-          {/* 笔记卡片列表（批次内顺序 = 提交/合集顺序） */}
-          <div className="flex flex-col gap-2">
-            {tasks.map(task => (
-              <NoteCard
-                key={task.id}
-                task={task}
-                selected={selectedId === task.id}
-                baseURL={baseURL}
-                onSelect={onSelect}
-                onRemove={onRemoveTask}
-                onRetry={task.status === 'FAILED' ? onRetryTask : undefined}
-                leading={
-                  <span onClick={e => e.stopPropagation()}>
-                    <Checkbox checked={checkedIds.has(task.id)} onCheckedChange={() => toggleCheck(task.id)} />
-                  </span>
-                }
-              />
-            ))}
-          </div>
-        </div>
-      )}
+          </TooltipTrigger>
+          <TooltipContent>
+            <p>删除整个批次</p>
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
     </div>
   )
 }
 
 /* -------------------- 主列表（分组混排 + 搜索） -------------------- */
 
-const NoteHistory: FC<NoteHistoryProps> = ({ onSelect, selectedId }) => {
+const NoteHistory: FC<NoteHistoryProps> = ({ onSelect, onSelectBatch, selectedId }) => {
   const tasks = useTaskStore(state => state.tasks)
   const removeTask = useTaskStore(state => state.removeTask)
-  const retryTask = useTaskStore(state => state.retryTask)
   const batches = useBatchStore(state => state.batches)
   const removeBatch = useBatchStore(state => state.removeBatch)
   // 确保baseURL没有尾部斜杠
@@ -511,15 +286,11 @@ const NoteHistory: FC<NoteHistoryProps> = ({ onSelect, selectedId }) => {
       <div className="flex flex-col gap-2 overflow-hidden">
         {filteredEntries.map(entry =>
           entry.batch && entry.batchTasks ? (
-            <BatchCard
+            <BatchRow
               key={entry.key}
               batch={entry.batch}
               tasks={entry.batchTasks}
-              selectedId={selectedId}
-              baseURL={baseURL}
-              onSelect={onSelect}
-              onRemoveTask={removeTask}
-              onRetryTask={id => retryTask(id)}
+              onOpen={id => onSelectBatch?.(id)}
               onRemoveBatch={handleRemoveBatch}
             />
           ) : (
