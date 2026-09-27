@@ -3,7 +3,7 @@
     <p align="center">
   <img src="./doc/icon.svg" alt="BiliNote Banner" width="50" height="50"  />
 </p>
-<h1 align="center" > BiliNote v2.4.4</h1>
+<h1 align="center" > BiliNote v2.4.5</h1>
 </div>
 
 <p align="center"><i>AI 视频笔记生成工具 让 AI 为你的视频做笔记</i></p>
@@ -46,9 +46,9 @@ BiliNote 是一个开源的 AI 视频笔记助手，支持通过哔哩哔哩、Y
 
 本仓库是 [JefferyHcool/BiliNote](https://github.com/JefferyHcool/BiliNote)（MIT License）的 fork，在上游 v2.4.5 基础上做了以下增强，原项目全部功能保持不变：
 
-1. **批量笔记页**：首页左上角「批量笔记」入口 —— 粘贴视频链接清单（每行一条），自动识别平台、无效链接自动剔除，批量提交后逐条显示进度，完成后一键打包下载全部 Markdown（.zip）。
+1. **批量笔记**：首页左上角「批量笔记」入口 —— 粘贴视频链接清单（每行一条），自动识别平台、无效链接自动剔除；支持 **B 站合集/收藏夹/分 P 链接一键展开**与**视频理解**选项。批量提交后在首页生成历史中以**批次卡片**管理：卡片可折叠展开内部笔记，右侧宽栏查看批次进度/剩余时间预估/失败重试，全部完成后一键导出（笔记 Markdown / 原文 txt（可选时间戳）/ 思维导图 xmind / 合并合集文档，逐条勾选默认全选，按提交顺序编号）。
 2. **GPU 可选增强（Windows / NVIDIA）**：安装包内置 GPU 自适应探测（torch 桩），默认 CPU 运行；只要本机具备 CUDA 运行环境即自动启用 GPU 转写，无需改动任何文件。启用方法见下文「启用 GPU 加速」。
-3. **修复上游下载链路缺陷**：修复 B 站 / 抖音 / 快手在「已有字幕」时误触完整视频下载的问题（上游 `skip_download` 参数未生效），并修复转写/总结阶段进度状态不更新（长时间卡在「下载中」）的问题。
+3. **修复上游缺陷**：修复 B 站 / 抖音 / 快手在「已有字幕」时误触完整视频下载的问题（上游 `skip_download` 参数未生效）；修复转写/总结阶段进度状态不更新（长时间卡在「下载中」）的问题；任务异常不再永久卡在「排队中」。
 
 ## 🌐 在线使用（推荐）
 
@@ -61,9 +61,12 @@ BiliNote 是一个开源的 AI 视频笔记助手，支持通过哔哩哔哩、Y
 ## 📝 使用文档
 详细文档可以查看[这里](https://docs.bilinote.app/)
 ## 📦 桌面版下载
-本项目提供了 Windows 和 macOS 桌面客户端，可在 [Releases](https://github.com/JefferyHcool/BiliNote/releases) 页面下载最新版本。
+
+本 fork 提供 Windows 桌面客户端（含批量笔记与 GPU 可选加速），可在 [本 fork 的 Releases](https://github.com/YIdingming/BiliNote/releases) 页面下载最新版本。
 
 > Windows 用户请注意：一定要在没有中文路径的环境下运行。
+
+上游官方的 macOS / Windows 客户端见 [上游 Releases](https://github.com/JefferyHcool/BiliNote/releases)。
 
 ### ⚡ 启用 GPU 加速（可选，Windows / NVIDIA 显卡）
 
@@ -287,7 +290,7 @@ docker logs -f bilinote-backend
 #### 1. 克隆仓库
 
 ```bash
-git clone https://github.com/JefferyHcool/BiliNote.git
+git clone https://github.com/YIdingming/BiliNote.git
 cd BiliNote
 mv .env.example .env
 ```
