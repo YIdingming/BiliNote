@@ -1,7 +1,7 @@
 import { useTaskStore, type Task } from '@/store/taskStore'
 import { useBatchStore, type Batch } from '@/store/batchStore'
 import { cn } from '@/lib/utils.ts'
-import { Trash, ChevronRight, Loader2 } from 'lucide-react'
+import { Trash, ChevronRight, ChevronDown, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button.tsx'
 import Fuse from 'fuse.js'
 
@@ -127,19 +127,45 @@ const NoteCard: FC<NoteCardProps> = ({ task, selected, baseURL, onSelect, onRemo
   )
 }
 
-/* -------------------- 批次行（点击进入右侧批次详情） -------------------- */
+/* -------------------- 批次卡片（点击展开内部笔记 + 右侧详情） -------------------- */
 
-interface BatchRowProps {
+interface BatchCardProps {
   batch: Batch
   tasks: Task[]
+  selectedId: string | null
+  baseURL: string
   onOpen: (batchId: string) => void
+  onSelect: (taskId: string) => void
+  onRemoveTask: (taskId: string) => void
+  onRetryTask: (taskId: string) => void
   onRemoveBatch: (batchId: string) => void
 }
 
-const BatchRow: FC<BatchRowProps> = ({ batch, tasks, onOpen, onRemoveBatch }) => {
+const BatchCard: FC<BatchCardProps> = ({
+  batch,
+  tasks,
+  selectedId,
+  baseURL,
+  onOpen,
+  onSelect,
+  onRemoveTask,
+  onRetryTask,
+  onRemoveBatch,
+}) => {
   const allDone = tasks.every(t => isDone(t.status))
+  // 进行中的批次默认展开，全部结束自动折叠
+  const [expanded, setExpanded] = useState(() => !allDone)
+  useEffect(() => {
+    if (allDone) setExpanded(false)
+  }, [allDone])
   const doneCount = tasks.filter(t => isDone(t.status)).length
-  const failedCount = tasks.filter(t => t.status === 'FAILED').length
+  const failedTasks = tasks.filter(t => t.status === 'FAILED')
+
+  const handleRowClick = () => {
+    // 展开内部笔记列表 + 右侧宽栏切换批次详情（导出在右侧）
+    setExpanded(!expanded)
+    onOpen(batch.id)
+  }
 
   const handleRemoveBatch = () => {
     if (window.confirm(`删除整个批次「${batch.name}」及其全部 ${tasks.length} 条笔记？`)) {
@@ -148,44 +174,67 @@ const BatchRow: FC<BatchRowProps> = ({ batch, tasks, onOpen, onRemoveBatch }) =>
   }
 
   return (
-    <div
-      className="flex cursor-pointer items-center gap-2 rounded-md border border-neutral-200 bg-neutral-50/60 p-2.5 hover:border-neutral-300"
-      onClick={() => onOpen(batch.id)}
-    >
-      <ChevronRight className="h-4 w-4 shrink-0 text-neutral-400" />
-      <span className="min-w-0 flex-1 truncate text-sm font-medium text-gray-700" title={batch.name}>
-        {batch.name}
-      </span>
-      {!allDone && <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-blue-500" />}
-      <span className="shrink-0 text-[10px] text-neutral-500">
-        {doneCount}/{tasks.length} 完成
-      </span>
-      {failedCount > 0 && (
-        <span className="shrink-0 rounded bg-red-500 px-1.5 py-0.5 text-[10px] text-white">
-          失败 {failedCount}
+    <div className="rounded-md border border-neutral-200 bg-neutral-50/60">
+      <div
+        className="flex cursor-pointer items-center gap-2 p-2.5"
+        onClick={handleRowClick}
+      >
+        {expanded ? (
+          <ChevronDown className="h-4 w-4 shrink-0 text-neutral-400" />
+        ) : (
+          <ChevronRight className="h-4 w-4 shrink-0 text-neutral-400" />
+        )}
+        <span className="min-w-0 flex-1 truncate text-sm font-medium text-gray-700" title={batch.name}>
+          {batch.name}
         </span>
+        {!allDone && <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-blue-500" />}
+        <span className="shrink-0 text-[10px] text-neutral-500">
+          {doneCount}/{tasks.length} 完成
+        </span>
+        {failedTasks.length > 0 && (
+          <span className="shrink-0 rounded bg-red-500 px-1.5 py-0.5 text-[10px] text-white">
+            失败 {failedTasks.length}
+          </span>
+        )}
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                size="small"
+                variant="ghost"
+                onClick={e => {
+                  e.stopPropagation()
+                  handleRemoveBatch()
+                }}
+                className="shrink-0"
+              >
+                <Trash className="text-muted-foreground h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>删除整个批次</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      </div>
+
+      {/* 展开区：批次内笔记卡片（导出与批量管理在右侧批次详情） */}
+      {expanded && (
+        <div className="flex flex-col gap-2 border-t border-neutral-100 p-2">
+          {tasks.map(task => (
+            <NoteCard
+              key={task.id}
+              task={task}
+              selected={selectedId === task.id}
+              baseURL={baseURL}
+              onSelect={onSelect}
+              onRemove={onRemoveTask}
+              onRetry={task.status === 'FAILED' ? onRetryTask : undefined}
+            />
+          ))}
+        </div>
       )}
-      <TooltipProvider>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              type="button"
-              size="small"
-              variant="ghost"
-              onClick={e => {
-                e.stopPropagation()
-                handleRemoveBatch()
-              }}
-              className="shrink-0"
-            >
-              <Trash className="text-muted-foreground h-4 w-4" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>
-            <p>删除整个批次</p>
-          </TooltipContent>
-        </Tooltip>
-      </TooltipProvider>
     </div>
   )
 }
@@ -286,11 +335,16 @@ const NoteHistory: FC<NoteHistoryProps> = ({ onSelect, onSelectBatch, selectedId
       <div className="flex flex-col gap-2 overflow-hidden">
         {filteredEntries.map(entry =>
           entry.batch && entry.batchTasks ? (
-            <BatchRow
+            <BatchCard
               key={entry.key}
               batch={entry.batch}
               tasks={entry.batchTasks}
+              selectedId={selectedId}
+              baseURL={baseURL}
               onOpen={id => onSelectBatch?.(id)}
+              onSelect={onSelect}
+              onRemoveTask={removeTask}
+              onRetryTask={id => retryTask(id)}
               onRemoveBatch={handleRemoveBatch}
             />
           ) : (
