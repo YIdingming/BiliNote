@@ -52,8 +52,13 @@ pub fn run() {
             // 检查 ffmpeg 是否在 PATH 中可用
             check_ffmpeg_availability();
 
+            // 启动令牌：下发给 sidecar 的环境变量，ready-probe 用它确认端口上
+            // 应答的就是本实例的 sidecar——端口被旧版/其他实例占用时，
+            // 别人后端返回的 200 不会被误判成「就绪」并静默连上。
+            let sidecar_token = new_sidecar_token();
+
             // 启动 Sidecar 并把 child handle 存到 state，方便后续 restart_backend_sidecar 使用
-            let child = spawn_backend_sidecar(app.handle()).map_err(|e| {
+            let child = spawn_backend_sidecar(app.handle(), &sidecar_token).map_err(|e| {
                 eprintln!("Sidecar 启动失败: {}", e);
                 e
             })?;
@@ -61,7 +66,7 @@ pub fn run() {
 
             // 启动 ready probe：异步轮询本地 BACKEND_PORT 是否在监听，
             // 解决前端 useCheckBackend 在 PyInstaller 解压期瞎猜后端起没起的问题。
-            spawn_backend_ready_probe(app.handle().clone());
+            spawn_backend_ready_probe(app.handle().clone(), sidecar_token);
 
             Ok(())
         })
@@ -268,9 +273,23 @@ async fn test_ffmpeg_access() -> Result<String, String> {
     run_command_with_env("ffmpeg".to_string(), vec!["-version".to_string()]).await
 }
 
+// 每次启动 sidecar 生成一次性启动令牌（纯 std：纳秒时钟 + 进程 ID，同机短窗口
+// 碰撞概率可忽略）。经环境变量下发给 sidecar，/api/sys_check 回显，ready-probe
+// 比对——端口被旧版官方安装版或其他实例占用时，不再把别人的 200 误判成就绪。
+fn new_sidecar_token() -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!("bn-{:x}-{:x}", nanos, std::process::id())
+}
+
 // 启动后端 Sidecar：负责装环境变量、spawn、挂 stdout/stderr/terminated 监听并 emit 给前端。
 // 第一次启动 + restart_backend_sidecar 都走这里，保持单一启动路径。
-fn spawn_backend_sidecar(app_handle: &tauri::AppHandle) -> Result<CommandChild, String> {
+fn spawn_backend_sidecar(
+    app_handle: &tauri::AppHandle,
+    sidecar_token: &str,
+) -> Result<CommandChild, String> {
     let exe_path = env::current_exe().map_err(|e| format!("无法获取可执行文件路径: {}", e))?;
     let sidecar_dir = exe_path
         .parent()
@@ -286,6 +305,11 @@ fn spawn_backend_sidecar(app_handle: &tauri::AppHandle) -> Result<CommandChild, 
     let additional_paths = get_additional_binary_paths();
     let enhanced_path = enhance_path_variable(&current_path, &additional_paths);
     all_env_vars.insert("PATH".to_string(), enhanced_path);
+    // 启动令牌：后端 /api/sys_check 会回显它，ready-probe 靠它认领「应答的是本实例」
+    all_env_vars.insert(
+        "BILLINOTE_SIDECAR_TOKEN".to_string(),
+        sidecar_token.to_string(),
+    );
 
     let mut sidecar_command = app_handle
         .shell()
@@ -357,8 +381,9 @@ fn restart_backend_sidecar(
             let _ = child.kill();
         }
     }
-    // 2. 重新 spawn
-    let new_child = spawn_backend_sidecar(&app)?;
+    // 2. 生成新令牌并重新 spawn（旧 sidecar 已 kill，旧令牌随之作废）
+    let sidecar_token = new_sidecar_token();
+    let new_child = spawn_backend_sidecar(&app, &sidecar_token)?;
     {
         let mut guard = state.0.lock().map_err(|e| format!("锁 sidecar state 失败: {}", e))?;
         *guard = Some(new_child);
@@ -368,7 +393,7 @@ fn restart_backend_sidecar(
         let _ = window.emit("backend-restarted", ());
     }
     // 4. 重启后同样起一次 ready probe，让前端能及时退出失败态
-    spawn_backend_ready_probe(app);
+    spawn_backend_ready_probe(app, sidecar_token);
     Ok(())
 }
 
@@ -379,7 +404,7 @@ fn restart_backend_sidecar(
 // 没 bind 上立刻就死，banner 永远停在「后端进程已退出」。
 //
 // 真发一个 HTTP 请求拿 200 才算「这是我们的后端在响应」。
-fn spawn_backend_ready_probe(app: tauri::AppHandle) {
+fn spawn_backend_ready_probe(app: tauri::AppHandle, sidecar_token: String) {
     let port: u16 = env::var("BACKEND_PORT")
         .ok()
         .and_then(|v| v.parse().ok())
@@ -391,7 +416,7 @@ fn spawn_backend_ready_probe(app: tauri::AppHandle) {
         let start = Instant::now();
         let probe_interval = Duration::from_millis(500);
         loop {
-            if probe_sys_check(&addr) {
+            if probe_sys_check(&addr, &sidecar_token) {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.emit("backend-ready", port);
                     println!("Backend ready on port {} after {:?}", port, start.elapsed());
@@ -401,7 +426,7 @@ fn spawn_backend_ready_probe(app: tauri::AppHandle) {
             if start.elapsed() >= timeout {
                 if let Some(window) = app.get_webview_window("main") {
                     let payload = format!(
-                        "后端在 {}s 内 /api/sys_check 未返回 200，疑似启动失败或端口 {} 被其他进程占用",
+                        "后端在 {}s 内未通过就绪校验（本实例 sidecar 令牌未在端口 {} 上应答，可能被旧版 BiliNote 或其他程序占用）",
                         timeout.as_secs(),
                         port
                     );
@@ -421,7 +446,7 @@ fn spawn_backend_ready_probe(app: tauri::AppHandle) {
 
 // 极简 HTTP/1.0 GET /api/sys_check —— 用 std::net 手写避免引 reqwest/ureq 的重依赖。
 // 任何错都视为「还没就绪」，下次 tick 再试。
-fn probe_sys_check(addr: &SocketAddr) -> bool {
+fn probe_sys_check(addr: &SocketAddr, sidecar_token: &str) -> bool {
     let connect_timeout = Duration::from_millis(800);
     let rw_timeout = Duration::from_millis(1500);
     let mut stream = match TcpStream::connect_timeout(addr, connect_timeout) {
@@ -438,15 +463,16 @@ fn probe_sys_check(addr: &SocketAddr) -> bool {
     if stream.write_all(req.as_bytes()).is_err() {
         return false;
     }
-    // 只要 status line，64 字节够了
-    let mut buf = [0u8; 64];
-    let n = match stream.read(&mut buf) {
-        Ok(n) => n,
-        Err(_) => return false,
-    };
-    let head = std::str::from_utf8(&buf[..n]).unwrap_or("");
-    // 兼容 HTTP/1.0 / 1.1 起始行
-    head.starts_with("HTTP/1.1 200") || head.starts_with("HTTP/1.0 200")
+    // 读完整响应：status 200 且 body 回显本实例令牌才算「是我们的 sidecar 在应答」。
+    // 令牌不匹配（端口被旧版官方安装版 / 其他实例占用）返回 false，probe 继续等
+    // 或最终超时报错——绝不把别人后端的 200 当成自己的就绪信号。
+    let mut buf = Vec::new();
+    if stream.read_to_end(&mut buf).is_err() {
+        return false;
+    }
+    let resp = String::from_utf8_lossy(&buf);
+    let status_ok = resp.starts_with("HTTP/1.1 200") || resp.starts_with("HTTP/1.0 200");
+    status_ok && resp.contains(sidecar_token)
 }
 
 // 安装路径诊断：PyInstaller 在含非 ASCII / 空格的路径下加载 _internal/* 经常炸；

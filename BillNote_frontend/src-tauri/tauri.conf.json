@@ -1,8 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "BiliNote",
+  "productName": "BiliNote-Enhanced",
   "version": "2.4.5",
-  "identifier": "com.jefferyhuang.bilinote",
+  "identifier": "com.yidingming.bilinote",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:3015",

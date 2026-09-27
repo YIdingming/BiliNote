@@ -26,7 +26,13 @@ async function probeSysCheck(): Promise<boolean> {
     const res = await fetch(url, { signal: ctrl.signal })
     if (!res.ok) return false
     const json = await res.json().catch(() => null)
-    return json?.code === 0
+    if (json?.code !== 0) return false
+    // 桌面端要求后端带 sidecar 启动令牌字段（Tauri spawn 时经环境变量下发，
+    // /api/sys_check 回显）。端口被旧版官方安装版或其他实例占用时，对方后端
+    // 没有该字段——不校验会把别人的 200 误判成就绪，静默连上错误的后端。
+    // web / venv 裸跑模式无 sidecar，不做此约束。
+    if (isTauri && !json?.data?.sidecar_token) return false
+    return true
   }
   catch {
     return false

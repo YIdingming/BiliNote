@@ -447,8 +447,14 @@ async def sys_check():
     """轻量存活判定：后端进程能响应这个 endpoint 就算「起来了」，不查外部依赖。
 
     给桌面端 useCheckBackend / Tauri ready-probe 用。
+    sidecar_token：Tauri spawn sidecar 时通过环境变量下发的启动令牌，probe 用它
+    确认端口上应答的就是本实例的 sidecar——端口被旧版/其他实例占用时不误判就绪。
+    非 sidecar 启动（venv 裸跑 / web 部署）没有该环境变量，不返回此字段。
     """
-    return R.success()
+    import os
+
+    token = os.getenv("BILLINOTE_SIDECAR_TOKEN")
+    return R.success({"sidecar_token": token} if token else {})
 
 
 @router.get("/deploy_status")
